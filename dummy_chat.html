@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>Vulnerable LLM Chat</title></head>
+<body>
+    <!-- Prosty interfejs udający czat -->
+    <textarea id="chat-input" placeholder="Napisz do AI..."></textarea>
+    <button id="chat-submit" onclick="simulateLLM()">Wyślij</button>
+    <div id="chat-output" class="chat-response"></div>
+
+    <script>
+        function simulateLLM() {
+            const input = document.getElementById('chat-input').value;
+            const output = document.getElementById('chat-output');
+            output.innerText = "Generowanie...";
+            
+            // Symulacja opóźnienia sieciowego i podatności (Echo)
+            setTimeout(() => {
+                // Zwraca to co wpisał użytkownik (podatność na Prompt Injection)
+                output.innerText = "Odpowiedź AI: " + input;
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+[project]
+name = "aegis"
+version = "0.1.0"
+description = "Aegis-LLM DAST Scanner"
+requires-python = ">=3.11"
+dependencies =[
+    "pydantic>=2.0",
+    "pyyaml",
+    "structlog",
+    "httpx",
+    "beautifulsoup4",
+    "defusedxml",
+    "lxml",
+    "rich",
+    "google-re2",   
+    "playwright",
+    "tiktoken",
+    "PyJWT",
+    "cryptography",
+    "instructor",
+    "Jinja2",
+    "weasyprint",
+    "ollama",
+    "pebble"       
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio",
+    "pytest-mock"
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
