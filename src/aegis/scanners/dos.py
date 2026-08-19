@@ -40,10 +40,23 @@ async def _send_dos_probe(client: AegisHTTPClient, endpoint: TargetEndpoint, pay
             json=request_data,
             timeout=30.0
         ) as response:
-            response.raise_for_status()
-
-            # Odczytuje tylko pierwsze 4KB, aby potwierdzić, że serwer żyje i wysyła dane
-            await response.aread(4096)
+            try:
+                # Absolutny timeout na cały proces odczytu strumienia (Python 3.11+)
+                async with asyncio.timeout(10.0):
+                    read_size = 0
+                    async for chunk in response.aiter_bytes():
+                        read_size += len(chunk)
+                        if read_size >= 4096:
+                            break
+            except asyncio.TimeoutError:
+                logger.warning("Absolute timeout reached while reading DoS probe stream (Tarpit protection)")
+                # Zwracamy wyjątek zamiast go rzucać - funkcja i tak go zwraca do agregatora
+                return TimeoutError("Tarpit/Slowloris protection triggered during DoS probe")
+                
+           
+            if response.is_error:
+                # Zwracamy standardowy wyjątek Pythona zamiast httpx.HTTPStatusError
+                return ValueError(f"HTTP Error {response.status_code} during DoS probe")
         return (time.perf_counter() - start_time) * 1000
     except Exception as e:
         return e

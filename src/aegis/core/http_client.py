@@ -152,24 +152,39 @@ class AegisHTTPClient:
                 headers=endpoint.headers,
                 json=request_data
             ) as response:
-                response.raise_for_status()
-                # Odczytuje maksymalnie 500KB danych
-                raw_bytes = await response.aread(500_000)
+                try:
+                    # Absolutny timeout na cały proces odczytu strumienia (Python 3.11+)
+                    async with asyncio.timeout(15.0):
+                        chunks = []
+                        bytes_read = 0
+                        async for chunk in response.aiter_bytes():
+                            chunks.append(chunk)
+                            bytes_read += len(chunk)
+                            if bytes_read >= 500_000:
+                                break
+                        raw_bytes = b"".join(chunks)
+                except asyncio.TimeoutError:
+                    logger.warning("Absolute timeout reached while reading response stream (Tarpit protection)", url=str(endpoint.url))
+                    raw_bytes = b""
+                    
                 response_text = raw_bytes.decode("utf-8", errors="ignore")
+                
+                if response.is_error:
+                    status_code = response.status_code
+                    if status_code in (401, 403):
+                        logger.critical("Authorization denied (401/403). Global audit interruption.", url=str(endpoint.url))
+                        raise AuthRevokedError(f"Authentication revoked or invalid: HTTP {status_code}")
+                    logger.error("HTTP status error", url=str(endpoint.url), status_code=status_code)
+                    status = "ERROR"
             
         except ValueError as e:
             logger.error("Payload construction error (Recursion)", url=str(endpoint.url), error=str(e))
             response_text = f"Payload Error: {str(e)}"
             status = "ERROR"
-            
-        except httpx.HTTPStatusError as e:
-            # KRYTYCZNE: Circuit Breaker dla błędów autoryzacji
-            if e.response.status_code in (401, 403):
-                logger.critical("Authorization denied (401/403). Global audit interruption.", url=str(endpoint.url))
-                raise AuthRevokedError(f"Authentication revoked or invalid: HTTP {e.response.status_code}")
-                
-            logger.error("HTTP status error", url=str(endpoint.url), status_code=e.response.status_code)
-            response_text = e.response.text 
+
+        except AuthRevokedError:
+            # Pozwala wyjątkowi krytycznemu propagować się do orkiestratora (Circuit Breaker)
+            raise
             
         except httpx.RequestError as e:
             logger.error("Network error", url=str(endpoint.url), error=str(e))

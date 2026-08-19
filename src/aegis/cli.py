@@ -12,7 +12,7 @@ import ipaddress
 from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
-from pydantic import TypeAdapter, HttpUrl
+from pydantic import TypeAdapter, HttpUrl, ValidationError
 from typing import List, Optional
 from dataclasses import dataclass
 
@@ -135,13 +135,17 @@ async def scan_payload(
             is_vuln, evidence = await evaluate_vulnerability(payload, result.matched_evidence)
             
             # KROK 3: Ewaluacja Warstwa 2 (AI Judge Fallback)
-            if not is_vuln and llm_judge:
+            if not is_vuln and llm_judge and status != "ERROR":
                 await event_queue.put(ScanEvent(EventType.LLM_START))
                 try: 
                     async with judge_semaphore:
                         judge_res = await llm_judge.evaluate(payload.vector, result.matched_evidence)
                         is_vuln = judge_res.is_vulnerable
-                        evidence = f"[AI JUDGE]: {judge_res.reason}" if is_vuln else None
+                        if is_vuln:
+                            evidence = f"[AI JUDGE]: {judge_res.reason}"
+                        elif "timeout" in judge_res.reason.lower() or "failure" in judge_res.reason.lower():
+                            status = "ERROR"
+                            evidence = f"[AI JUDGE ERROR]: {judge_res.reason}"
                 finally: 
                     await event_queue.put(ScanEvent(EventType.LLM_END))
                     
@@ -150,8 +154,7 @@ async def scan_payload(
 
         result.is_vulnerable = is_vuln
         result.status = status
-        result.matched_evidence = evidence if is_vuln else None
-
+        result.matched_evidence = evidence if (is_vuln or status == "ERROR") else None
         return result
     
     except (AuthRevokedError, BrowserFatalError):
@@ -362,39 +365,26 @@ async def run_audit(args: argparse.Namespace):
         console.print("\n[yellow]Analysis of the JWT token (Algorithm Confusion)...[/yellow]")
         forged = JWTAnalyzer.create_none_algorithm_token(jwt_token)
         if forged:
-            # RZECZYWISTY TEST PODATNOŚCI
-            test_headers = custom_headers.copy()
-            test_headers["Authorization"] = f"Bearer {forged}"
-           
             try:
-                # Użycie istniejącego klienta HTTP do wysłania żądania
                 async with AegisHTTPClient(
                     verify_ssl=not args.insecure, 
                     allow_internal=args.allow_internal_target,
                     target_host=endpoint.url.host,
                     resolved_ip=endpoint.resolved_ip
                 ) as safe_client:
-                    request_kwargs = {
-                        "method": endpoint.method,
-                        "url": str(endpoint.url),
-                        "headers": test_headers
-                    }
-                    if endpoint.body_template:
-                        
-                        dummy_body = AegisHTTPClient.inject_payload(
-                            copy.deepcopy(endpoint.body_template), 
-                            "JWT_AUTH_TEST"
-                        )
-                        request_kwargs["json"] = dummy_body
-                    # Użycie zabezpieczonego klienta  
-                    resp = await safe_client.client.request(**request_kwargs)
-                    # Jeśli serwer zwraca 2xx/3xx, oznacza to, że zaakceptował sfałszowany token
-                    if 200 <= resp.status_code < 300:
-                        console.print(f"[bold red]VULNERABLE:[/bold red] The server accepted the 'none' token (Status: {resp.status_code}).")
+                    is_bypassed = await JWTAnalyzer.verify_auth_bypass(
+                        client=safe_client.client,
+                        endpoint=endpoint,
+                        forged_token=forged,
+                        original_headers=custom_headers
+                    )
+                    
+                    if is_bypassed:
+                        console.print(f"[bold red]VULNERABLE:[/bold red] The server accepted the 'none' token and bypassed authentication (Algorithm Confusion).")
                     else:
-                        console.print(f"[green]SECURE:[/green] The server rejected the 'none' token (Status: {resp.status_code}).")
+                        console.print(f"[green]SECURE:[/green] The server rejected the 'none' token or the endpoint is public.")
             except Exception as e:
-                console.print(f"[yellow]ERROR:[/yellow] The token could not be verified online: {e}")
+                console.print(f"[yellow]ERROR:[/yellow] The token could not be verified online: {e}") 
 
     # Inicjalizacja kolejki Producer-Consumer
     payload_queue = asyncio.Queue()

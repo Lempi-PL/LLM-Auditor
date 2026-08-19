@@ -2,13 +2,56 @@ import jwt
 import structlog
 import base64
 import json
+import httpx
+import copy
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from aegis.core.models import TargetEndpoint
 from typing import Optional, Dict, Any
 
 logger = structlog.get_logger(__name__)
 
 class JWTAnalyzer:
     """Moduł ofensywny do analizy i manipulacji tokenami JWT (Auth Bypass)."""
-
+    @staticmethod
+    async def verify_auth_bypass(client: httpx.AsyncClient, endpoint: 'TargetEndpoint', forged_token: str, original_headers: dict) -> bool:
+        """
+        Weryfikuje obejście autoryzacji poprzez porównanie żądania bazowego (bez tokenu)
+        z żądaniem zawierającym sfałszowany token (Algorithm Confusion).
+        Używa client.stream() aby uniknąć OOM/Tarpit.
+        """
+        from aegis.core.http_client import AegisHTTPClient
+        
+        baseline_headers = {k: v for k, v in original_headers.items() if k.lower() != "authorization"}
+        req_kwargs = {
+            "method": endpoint.method,
+            "url": str(endpoint.url),
+            "headers": baseline_headers
+        }
+        if endpoint.body_template:
+            req_kwargs["json"] = AegisHTTPClient.inject_payload(
+                copy.deepcopy(endpoint.body_template), "JWT_BASELINE_TEST"
+            )
+            
+        try:
+            async with client.stream(**req_kwargs) as baseline_resp:
+                baseline_rejected = baseline_resp.status_code in (401, 403)
+        except Exception:
+            baseline_rejected = True 
+            
+        if not baseline_rejected:
+            return False 
+            
+        req_kwargs["headers"]["Authorization"] = f"Bearer {forged_token}"
+        try:
+            async with client.stream(**req_kwargs) as forged_resp:
+                forged_accepted = 200 <= forged_resp.status_code < 300
+        except Exception:
+            forged_accepted = False
+            
+        return forged_accepted
+    
+    
     @staticmethod
     def decode_unsafe(token: str) -> Optional[Dict[str, Any]]:
         """

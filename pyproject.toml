@@ -28,7 +28,8 @@ dependencies =[
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio",
-    "pytest-mock"
+    "pytest-cov>=7.1.0",
+    "pytest-mock",
 ]
 
 [tool.pytest.ini_options]

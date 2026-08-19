@@ -39,3 +39,25 @@ def test_homoglyph_mutation(base_payload):
     
     # Długość stringa powinna pozostać identyczna
     assert len(mutated.vector) == len(base_payload.vector)
+
+def test_cognitive_bypass(base_payload):
+    """Weryfikuje opakowywanie wektora w scenariusz akademicki."""
+    mutator = PayloadMutator()
+    mutated = mutator.mutate_cognitive_bypass(base_payload)
+    
+    assert mutated.id == "base_01_cognitive"
+    assert "evasion_cognitive" in mutated.tags
+    assert "<scenario>" in mutated.vector
+    assert base_payload.vector in mutated.vector
+
+def test_generate_all_mutations(base_payload):
+    """Weryfikuje, czy generator zwraca wszystkie 4 warianty (oryginał + 3 mutacje)."""
+    mutator = PayloadMutator()
+    all_payloads = mutator.generate_all_mutations(base_payload)
+    
+    assert len(all_payloads) == 4
+    ids = [p.id for p in all_payloads]
+    assert "base_01" in ids
+    assert "base_01_b64" in ids
+    assert "base_01_homoglyph" in ids
+    assert "base_01_cognitive" in ids
